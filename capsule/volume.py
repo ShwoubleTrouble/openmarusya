@@ -5,21 +5,30 @@
 Playback = Master/100 * 251, как на ползунках интерфейса.
 """
 
+import array
 import glob
+import io
+import math
 import os
 import re
 import select
 import struct
 import subprocess
 import sys
+import wave
 
 CARD = "0"
+OUT_DEVICE = "default"
+BEEP_MS = 45
+BEEP_AMP = 8000
 MASTER_MAX = 100
 PLAYBACK_MAX = 251
 STEP = 5                    # шаг Master, примерно 3 дБ
 
 KEY_VOLUMEDOWN = 114
 KEY_VOLUMEUP = 115
+# выше при прибавлении, ниже при убавлении
+BEEP_HZ = {KEY_VOLUMEUP: 1100, KEY_VOLUMEDOWN: 700}
 
 level = MASTER_MAX
 
@@ -35,6 +44,38 @@ def read_level() -> int:
     """Текущее Master в сырых единицах (0..100)."""
     m = re.search(r"(?:Playback|Capture)\s+(\d+)\s+\[", amixer("sget", "Master"))
     return int(m.group(1)) if m else MASTER_MAX
+
+
+_beeps: dict[int, bytes] = {}
+
+
+def beep(code: int) -> None:
+    """Короткий щелчок: выше при прибавлении, ниже при убавлении."""
+    freq = BEEP_HZ.get(code)
+    if freq is None:
+        return
+    data = _beeps.get(freq)
+    if data is None:
+        rate = 48000
+        n = rate * BEEP_MS // 1000
+        a = array.array("h")
+        for i in range(n):
+            env = math.sin(math.pi * i / n)       # плавные края, без щелчков
+            a.append(int(BEEP_AMP * env *
+                         math.sin(2 * math.pi * freq * i / rate)))
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(a.tobytes())
+        data = _beeps[freq] = buf.getvalue()
+    try:
+        subprocess.run(["aplay", "-q", "-D", OUT_DEVICE, "-"], input=data,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def apply(value: int) -> None:
@@ -83,6 +124,7 @@ def main() -> int:
                 else:
                     continue
                 apply(level)
+                beep(code)
         sys.stdout.flush()
     return 0
 
