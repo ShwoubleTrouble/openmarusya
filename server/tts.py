@@ -9,6 +9,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
+import urllib.error
 import urllib.request
 import wave
 
@@ -78,8 +80,19 @@ def _gemini(text: str) -> bytes:
         headers={"Content-Type": "application/json"}, method="POST",
     )
     try:
-        with opener.open(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        last = None
+        for attempt in range(3):
+            try:
+                with opener.open(req, timeout=60) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as exc:
+                last = exc
+                if exc.code not in (429, 500, 503) or attempt == 2:
+                    raise
+                time.sleep(1.5 * (attempt + 1))   # лимит ключа: ждём и пробуем снова
+        else:
+            raise last
     except Exception as exc:
         raise TTSError(f"gemini tts: {exc}") from exc
 
