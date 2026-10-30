@@ -86,9 +86,15 @@ def frames(stream, rate: int, gain: int):
         if sys.byteorder == "big":
             src.byteswap()
         dst = array.array("h")
-        for i in range(0, len(src), step * NATIVE_CH):
-            v = (src[i] + src[i + NATIVE_CH] + src[i + 2 * NATIVE_CH]) // 3
-            v = (v >> 16) * gain
+        span = step * NATIVE_CH
+        for i in range(0, len(src), span):
+            # усредняем 3 кадра (48k -> 16k): без этого при децимации
+            # слышимые частоты накладываются и STT путает «Маруся»
+            v = 0
+            for k in range(step):
+                base = i + k * NATIVE_CH
+                v += src[base] + src[base + 1] + src[base + 2]
+            v = (v // (step * 3) >> 16) * gain
             dst.append(-32768 if v < -32768 else 32767 if v > 32767 else v)
         yield dst.tobytes()
 
