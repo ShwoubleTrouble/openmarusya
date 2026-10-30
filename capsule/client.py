@@ -176,7 +176,7 @@ def main() -> int:
         stop(probe)
         levels.sort()
         floor = levels[len(levels) // 2] if levels else 0
-        threshold = max(400, int(floor * 4))
+        threshold = max(150, int(floor * 4))
         print(f"сигнал: {raw_min}..{raw_max}, шум(AC) {floor}, порог {threshold}", flush=True)
         if raw_max - raw_min < 200:
             print("! захват отдаёт постоянный уровень — микрофон не пишет или не тот "
