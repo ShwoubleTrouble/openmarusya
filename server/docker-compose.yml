@@ -4,7 +4,7 @@ services:
       context: .
       args:
         # если Docker Hub недоступен — указать зеркало в .env
-        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
+        BASE_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
     container_name: marusya
     restart: unless-stopped
     ports:

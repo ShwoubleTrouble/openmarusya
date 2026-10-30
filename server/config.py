@@ -55,8 +55,10 @@ SYSTEM_PROMPT = _env(
 )
 
 # --- STT ---
-# "faster_whisper" (в докере, pip) | "whisper_cpp" (CLI)
-STT_ENGINE = _env("STT_ENGINE", "faster_whisper")
+# "vosk" (pip, realtime на старых CPU) | "faster_whisper" | "whisper_cpp"
+STT_ENGINE = _env("STT_ENGINE", "vosk")
+VOSK_MODEL = _env("VOSK_MODEL", "/models/vosk-model-small-ru-0.22")
+
 FASTER_WHISPER_MODEL = _env("FASTER_WHISPER_MODEL", "small")
 FASTER_WHISPER_COMPUTE = _env("FASTER_WHISPER_COMPUTE", "int8")
 FASTER_WHISPER_DIR = _env("FASTER_WHISPER_DIR", "/models/hf")

@@ -14,6 +14,38 @@ class STTError(RuntimeError):
     pass
 
 
+# ---------- vosk ----------
+
+_vosk_model = None
+_vosk_lock = threading.Lock()
+
+
+def _vosk():
+    global _vosk_model
+    with _vosk_lock:
+        if _vosk_model is None:
+            try:
+                from vosk import Model, SetLogLevel
+            except ImportError as exc:
+                raise STTError("vosk не установлен") from exc
+            SetLogLevel(-1)
+            if not os.path.isdir(config.VOSK_MODEL):
+                raise STTError(f"нет модели vosk {config.VOSK_MODEL}")
+            _vosk_model = Model(config.VOSK_MODEL)
+        return _vosk_model
+
+
+def _transcribe_vosk(pcm: bytes, sample_rate: int) -> str:
+    import json as _json
+    from vosk import KaldiRecognizer
+
+    if sample_rate != 16000:
+        raise STTError(f"vosk ждёт 16000 Гц, пришло {sample_rate}")
+    rec = KaldiRecognizer(_vosk(), sample_rate)
+    rec.AcceptWaveform(pcm)
+    return _json.loads(rec.FinalResult()).get("text", "").strip()
+
+
 # ---------- faster-whisper ----------
 
 _fw_model = None
@@ -94,6 +126,8 @@ def _transcribe_cpp(pcm: bytes, sample_rate: int) -> str:
 
 def transcribe(pcm: bytes, sample_rate: int = 16000) -> str:
     """pcm: сырой s16le mono. Возвращает текст."""
+    if config.STT_ENGINE == "vosk":
+        return _transcribe_vosk(pcm, sample_rate)
     if config.STT_ENGINE == "whisper_cpp":
         return _transcribe_cpp(pcm, sample_rate)
     return _transcribe_fw(pcm, sample_rate)
