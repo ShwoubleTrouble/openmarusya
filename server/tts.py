@@ -20,31 +20,37 @@ class TTSError(RuntimeError):
 
 
 def _fix_tail(pcm: bytes, rate: int) -> bytes:
-    """Gemini обрывает аудио всплеском шума на последних миллисекундах.
-    Срезаем выброс и делаем плавное затухание."""
+    """Gemini дописывает в конец всплеск шума после паузы.
+    Если после тишины идёт звук — это артефакт, отрезаем его и гасим хвост."""
     a = array.array("h")
     a.frombytes(pcm)
-    if len(a) < rate // 10:
+    win = max(1, rate // 100)          # 10 мс
+    if len(a) < win * 20:
         return pcm
 
     def rms(seg):
         return math.isqrt(sum(v * v for v in seg) // len(seg)) if seg else 0
 
-    win = max(1, rate // 200)          # 5 мс
-    ref = max(1, rate // 20)           # 50 мс
-    trimmed = 0
-    while trimmed < rate // 10 and len(a) > ref + win:   # не больше 100 мс
-        last = a[-win:]
-        prev = a[-ref - win:-win]
-        if rms(last) > max(2500, 2 * rms(prev)):
-            del a[-win:]
-            trimmed += win
-        else:
-            break
+    quiet = 100
+    wins = [rms(a[i:i + win]) for i in range(0, len(a) - win + 1, win)]
 
-    fade = min(len(a), rate // 50)     # 20 мс затухания
-    for i in range(fade):
-        a[len(a) - fade + i] = int(a[len(a) - fade + i] * (1 - i / fade))
+    i = len(wins) - 1
+    while i >= 0 and wins[i] < quiet:   # пропускаем тишину в самом конце
+        i -= 1
+    j = i
+    while j >= 0 and wins[j] >= quiet:  # назад по последнему звучащему куску
+        j -= 1
+
+    if i < 0:
+        return b"\x00" * (len(a) * 2)   # одна тишина
+    cut = len(a)
+    if i - j >= 8:                       # >=80 мс паузы перед этим куском → артефакт
+        cut = (j + 1) * win
+    del a[cut:]
+
+    fade = min(len(a), rate // 50)       # 20 мс затухания
+    for k in range(fade):
+        a[len(a) - fade + k] = int(a[len(a) - fade + k] * (1 - k / fade))
     return a.tobytes()
 
 
