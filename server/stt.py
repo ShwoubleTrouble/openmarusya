@@ -1,10 +1,13 @@
 """STT: faster-whisper (pip) или whisper.cpp CLI."""
 
+import json
 import os
 import shutil
 import subprocess
 import tempfile
 import threading
+import urllib.parse
+import urllib.request
 import wave
 
 import config
@@ -12,6 +15,29 @@ import config
 
 class STTError(RuntimeError):
     pass
+
+
+# ---------- yandex ----------
+
+def _transcribe_yandex(pcm: bytes, sample_rate: int) -> str:
+    if not config.YANDEX_API_KEY:
+        raise STTError("нет YANDEX_API_KEY")
+    params = urllib.parse.urlencode({
+        "lang": config.WHISPER_LANG + "-RU" if config.WHISPER_LANG == "ru" else config.WHISPER_LANG,
+        "format": "lpcm",
+        "sampleRateHertz": str(sample_rate),
+        "topic": config.YANDEX_STT_TOPIC,
+    })
+    req = urllib.request.Request(
+        f"{config.YANDEX_STT_URL}?{params}", data=pcm,
+        headers={"Authorization": f"Api-Key {config.YANDEX_API_KEY}"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        raise STTError(f"yandex stt: {exc}") from exc
+    return (data.get("result") or "").strip()
 
 
 # ---------- vosk ----------
@@ -126,6 +152,8 @@ def _transcribe_cpp(pcm: bytes, sample_rate: int) -> str:
 
 def transcribe(pcm: bytes, sample_rate: int = 16000) -> str:
     """pcm: сырой s16le mono. Возвращает текст."""
+    if config.STT_ENGINE == "yandex":
+        return _transcribe_yandex(pcm, sample_rate)
     if config.STT_ENGINE == "vosk":
         return _transcribe_vosk(pcm, sample_rate)
     if config.STT_ENGINE == "whisper_cpp":

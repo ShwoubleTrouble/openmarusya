@@ -54,10 +54,17 @@ SYSTEM_PROMPT = _env(
     "Если не знаешь — скажи честно.",
 )
 
+# --- Wake word ---
+# Фразы без обращения игнорируются. Пусто = реагировать на всё.
+WAKE_WORDS = [w.strip().lower() for w in _env("WAKE_WORDS", "маруся,марусь,маруся,").split(",") if w.strip()]
+WAKE_REPLY = _env("WAKE_REPLY", "Да?")
+
 # --- STT ---
 # "vosk" (pip, realtime на старых CPU) | "faster_whisper" | "whisper_cpp"
 STT_ENGINE = _env("STT_ENGINE", "vosk")
 VOSK_MODEL = _env("VOSK_MODEL", "/models/vosk-model-small-ru-0.22")
+YANDEX_STT_URL = _env("YANDEX_STT_URL", "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize")
+YANDEX_STT_TOPIC = _env("YANDEX_STT_TOPIC", "general")
 
 FASTER_WHISPER_MODEL = _env("FASTER_WHISPER_MODEL", "small")
 FASTER_WHISPER_COMPUTE = _env("FASTER_WHISPER_COMPUTE", "int8")

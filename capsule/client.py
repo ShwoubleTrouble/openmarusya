@@ -264,6 +264,11 @@ def main() -> int:
                 continue
 
             print(f"ответ за {time.time() - t0:.1f} с", flush=True)
+            if not wav:
+                print("не ко мне — пропускаю", flush=True)
+                if args.once:
+                    return 0
+                continue
             play(wav, args.out_device)
             if args.once:
                 return 0

@@ -12,6 +12,7 @@
 
 import base64
 import json
+import re
 import sys
 import threading
 import traceback
@@ -28,6 +29,35 @@ _llm = llm.LLM()
 
 NOT_HEARD = "Не расслышала, повтори."
 ERROR_PHRASE = "Что-то пошло не так, попробуй ещё раз."
+
+
+def _close(a: str, b: str) -> bool:
+    """Грубое сравнение слов: Vosk иногда слышит «маруся» как «марусья»."""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 2:
+        return False
+    if len(b) <= 5:
+        return False
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1] <= (1 if len(b) <= 8 else 2)
+
+
+def _wake_split(text: str) -> tuple[bool, str]:
+    """Ищет обращение в первых двух словах. Возвращает (обратились, команда)."""
+    words = re.findall(r"[а-яёa-z0-9]+", text.lower().replace("ё", "е"))
+    if not words:
+        return False, ""
+    for idx in range(min(2, len(words))):
+        for wake in config.WAKE_WORDS:
+            if _close(words[idx], wake.replace("ё", "е")):
+                return True, " ".join(words[idx + 1:])
+    return False, ""
 
 
 def _pipeline(text: str) -> bytes:
@@ -103,6 +133,18 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 with _pipeline_lock:
                     text = stt.transcribe(pcm, rate)
+                    if config.WAKE_WORDS:
+                        woken, command = _wake_split(text)
+                        if not woken:
+                            print(f"[skip] {text}", flush=True)
+                            self._send(204, b"", "text/plain")
+                            return
+                        if not command:
+                            print(f"[wake] {text}", flush=True)
+                            self._send(200, tts.synthesize(config.WAKE_REPLY),
+                                       "audio/wav", {"X-Text-B64": base64.b64encode(text.encode()).decode()})
+                            return
+                        text = command
                     wav = _pipeline(text)
                 self._send(200, wav, "audio/wav",
                            {"X-Text-B64": base64.b64encode(text.encode()).decode()})
