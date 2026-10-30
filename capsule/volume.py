@@ -20,7 +20,7 @@ import wave
 CARD = "0"
 OUT_DEVICE = "default"
 BEEP_MS = 45
-BEEP_AMP = 8000
+BEEP_AMP = 26000            # почти полная шкала, иначе на капсуле еле слышно
 MASTER_MAX = 100
 PLAYBACK_MAX = 251
 STEP = 5                    # шаг Master, примерно 3 дБ
