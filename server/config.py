@@ -71,7 +71,7 @@ WHISPER_THREADS = _env_int("WHISPER_THREADS", 0)  # 0 = все ядра
 
 # --- TTS ---
 # "gemini" (нейронный голос) | "piper" | "espeak"
-TTS_ENGINE = _env("TTS_ENGINE", "gemini")
+TTS_ENGINE = _env("TTS_ENGINE", "espeak")
 GEMINI_API_KEY = _env("GEMINI_API_KEY", "")
 GEMINI_TTS_MODEL = _env("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
 GEMINI_TTS_VOICE = _env("GEMINI_TTS_VOICE", "Kore")
