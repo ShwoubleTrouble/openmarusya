@@ -15,6 +15,7 @@ import collections
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -98,8 +99,13 @@ def stop(proc: subprocess.Popen) -> None:
 
 
 def record_utterance(it, rate: int, threshold: int, trailing_ms: int,
-                     max_s: float, wait_s: float, min_s: float = 0.4) -> tuple[bytes | None, int]:
-    """Ждёт речь, пишет до паузы. Возвращает (pcm|None, пиковый уровень)."""
+                     max_s: float, wait_s: float, min_s: float = 0.4,
+                     on_trigger=None, alive=None) -> tuple[bytes | None, int]:
+    """Ждёт речь, пишет до паузы. Возвращает (pcm|None, пиковый уровень).
+
+    on_trigger — вызывается в момент срабатывания (перебили ответ).
+    alive — если вернёт False, ожидание прекращается (ответ доиграл).
+    """
     frame_bytes = rate * 2 * FRAME_MS // 1000
     trailing_frames = max(3, trailing_ms // FRAME_MS)
     trigger_frames = 5                     # 150 мс речи подряд
@@ -121,6 +127,8 @@ def record_utterance(it, rate: int, threshold: int, trailing_ms: int,
 
     # ждём устойчивой речи
     while seen < wait_frames:
+        if alive is not None and not alive():
+            return None, peak
         try:
             chunk = next(it)
         except StopIteration:
@@ -132,6 +140,8 @@ def record_utterance(it, rate: int, threshold: int, trailing_ms: int,
         if level >= threshold:
             run += 1
             if run >= trigger_frames:
+                if on_trigger is not None:
+                    on_trigger()
                 buf += b"".join(preroll)
                 break
         else:
@@ -166,14 +176,15 @@ def record_utterance(it, rate: int, threshold: int, trailing_ms: int,
 
 
 def ask_server(server: str, pcm: bytes, rate: int, token: str, timeout: int,
-               followup: bool = False, on_wake=None) -> bytes:
+               followup: bool = False, on_wake=None, bargein: bool = False) -> bytes:
     req = urllib.request.Request(
         server.rstrip("/") + "/v1/voice",
         data=pcm,
         headers={"Content-Type": "application/octet-stream",
                  "X-Rate": str(rate),
                  "X-Token": token,
-                 "X-Followup": "1" if followup else "0"},
+                 "X-Followup": "1" if followup else "0",
+                 "X-Bargein": "1" if bargein else "0"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -248,6 +259,85 @@ def play(wav: bytes, device: str) -> None:
         os.unlink(path)
 
 
+def record_barge(args, threshold: int, player: subprocess.Popen) -> tuple[bytes | None, bool]:
+    """Слушает, пока играет ответ. На речи ставит aplay на паузу:
+    дальше запись идёт без голоса колонки. Второй элемент — удалось ли
+    вообще открыть микрофон (иначе перебивание недоступно)."""
+    paused = False
+
+    def trigger() -> None:
+        nonlocal paused
+        paused = True
+        player.send_signal(signal.SIGSTOP)
+
+    proc = start_recorder(args.in_device, args.rate)
+    try:
+        time.sleep(0.2)
+        if proc.poll() is not None:
+            return None, False
+        pcm, _ = record_utterance(
+            frames(proc.stdout, args.rate, args.gain), args.rate, threshold,
+            args.silence_ms, args.max_s, args.max_s,
+            on_trigger=trigger, alive=lambda: player.poll() is None,
+        )
+    finally:
+        stop(proc)
+    if pcm is None and paused:
+        player.send_signal(signal.SIGCONT)   # фраза слишком короткая — продолжаем
+    return pcm, True
+
+
+def play_answer(wav: bytes, args, threshold: int, barge_threshold: int) -> bytes | None:
+    """Играет ответ и слушает перебивание. Возвращает новый ответ, если
+    во время речи позвали «Маруся» (иначе None)."""
+    if args.no_barge:
+        play(wav, args.out_device)
+        return None
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(wav)
+        path = f.name
+    player = subprocess.Popen(["aplay", "-q", "-D", args.out_device, path],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    fails = 0
+    try:
+        while player.poll() is None:
+            pcm, ok = record_barge(args, barge_threshold, player)
+            if not ok:
+                if player.poll() is not None:
+                    continue
+                fails += 1
+                if fails >= 3:
+                    print("перебивание недоступно: микрофон не открывается во время aplay",
+                          flush=True)
+                    break
+                time.sleep(1)
+                continue
+            fails = 0
+            if not pcm:
+                continue
+            print(f"перебили: {len(pcm) / (args.rate * 2):.1f} с, проверяю...", flush=True)
+            try:
+                wav2 = ask_server(args.server, pcm, args.rate, args.token, args.timeout,
+                                  False, pulse_ring, bargein=True)
+            except Exception as exc:
+                print(f"ошибка сервера: {exc}", flush=True)
+                if player.poll() is None:
+                    player.send_signal(signal.SIGCONT)
+                continue
+            if wav2:
+                if player.poll() is None:
+                    player.send_signal(signal.SIGCONT)   # снятый SIGTERM не дойдёт
+                stop(player)
+                return wav2
+            if player.poll() is None:
+                player.send_signal(signal.SIGCONT)       # не к ней — доигрываем
+        return None
+    finally:
+        stop(player)
+        os.unlink(path)
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--server", default=os.environ.get("MARYA_SERVER", "http://127.0.0.1:8080"))
@@ -266,6 +356,10 @@ def main() -> int:
     p.add_argument("--followup-s", type=float, default=5.0,
                    help="сколько секунд после ответа ждать продолжения без «Маруся»")
     p.add_argument("--timeout", type=int, default=120)
+    p.add_argument("--barge-threshold", type=int, default=0,
+                   help="порог RMS для перебивания во время ответа; 0 = 4x от обычного")
+    p.add_argument("--no-barge", action="store_true",
+                   help="не слушать во время ответа")
     p.add_argument("--once", action="store_true")
     args = p.parse_args()
 
@@ -293,6 +387,9 @@ def main() -> int:
                   "--in-device. Смотри: arecord -l", flush=True)
 
     print(f"сервер: {args.server}", flush=True)
+    barge_threshold = args.barge_threshold or max(threshold * 4, 800)
+    print(f"перебивание: порог {barge_threshold}" +
+          (" (выключено)" if args.no_barge else ""), flush=True)
     followup = False
 
     try:
@@ -339,7 +436,8 @@ def main() -> int:
                 if args.once:
                     return 0
                 continue
-            play(wav, args.out_device)
+            while wav:
+                wav = play_answer(wav, args, threshold, barge_threshold)
             followup = True               # 5 секунд ждём продолжения без обращения
             if args.once:
                 return 0
