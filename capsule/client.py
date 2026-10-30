@@ -165,13 +165,15 @@ def record_utterance(it, rate: int, threshold: int, trailing_ms: int,
     return bytes(buf), peak
 
 
-def ask_server(server: str, pcm: bytes, rate: int, token: str, timeout: int) -> bytes:
+def ask_server(server: str, pcm: bytes, rate: int, token: str, timeout: int,
+               followup: bool = False) -> bytes:
     req = urllib.request.Request(
         server.rstrip("/") + "/v1/voice",
         data=pcm,
         headers={"Content-Type": "application/octet-stream",
                  "X-Rate": str(rate),
-                 "X-Token": token},
+                 "X-Token": token,
+                 "X-Followup": "1" if followup else "0"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -203,6 +205,8 @@ def main() -> int:
     p.add_argument("--silence-ms", type=int, default=800)
     p.add_argument("--max-s", type=float, default=12.0)
     p.add_argument("--wait-s", type=float, default=6.0)
+    p.add_argument("--followup-s", type=float, default=5.0,
+                   help="сколько секунд после ответа ждать продолжения без «Маруся»")
     p.add_argument("--timeout", type=int, default=120)
     p.add_argument("--once", action="store_true")
     args = p.parse_args()
@@ -231,9 +235,11 @@ def main() -> int:
                   "--in-device. Смотри: arecord -l", flush=True)
 
     print(f"сервер: {args.server}", flush=True)
+    followup = False
 
     try:
         while True:
+            wait = args.followup_s if followup else args.wait_s
             proc = start_recorder(args.in_device, args.rate)
             try:
                 time.sleep(0.2)
@@ -243,33 +249,38 @@ def main() -> int:
                     return 1
                 pcm, peak = record_utterance(frames(proc.stdout, args.rate, args.gain),
                                              args.rate, threshold,
-                                             args.silence_ms, args.max_s, args.wait_s)
+                                             args.silence_ms, args.max_s, wait)
             finally:
                 stop(proc)
 
             if not pcm:
+                followup = False          # не дождались продолжения — снова ждём «Маруся»
                 if args.once:
                     return 0
                 print(f"нет речи (пик {peak} при пороге {threshold})", flush=True)
                 continue
 
-            print(f"записано {len(pcm) / (args.rate * 2):.1f} с, шлю...", flush=True)
+            print(f"записано {len(pcm) / (args.rate * 2):.1f} с, шлю..."
+                  f"{' (продолжение)' if followup else ''}", flush=True)
             t0 = time.time()
             try:
-                wav = ask_server(args.server, pcm, args.rate, args.token, args.timeout)
+                wav = ask_server(args.server, pcm, args.rate, args.token, args.timeout, followup)
             except Exception as exc:
                 print(f"ошибка сервера: {exc}", flush=True)
+                followup = False
                 if args.once:
                     return 1
                 continue
 
             print(f"ответ за {time.time() - t0:.1f} с", flush=True)
             if not wav:
+                followup = False
                 print("не ко мне — пропускаю", flush=True)
                 if args.once:
                     return 0
                 continue
             play(wav, args.out_device)
+            followup = True               # 5 секунд ждём продолжения без обращения
             if args.once:
                 return 0
 

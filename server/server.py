@@ -133,7 +133,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 with _pipeline_lock:
                     text = stt.transcribe(pcm, rate)
-                    if config.WAKE_WORDS:
+                    followup = self.headers.get("X-Followup", "0") == "1"
+                    if config.WAKE_WORDS and not followup:
                         woken, command = _wake_split(text)
                         if not woken:
                             print(f"[skip] {text}", flush=True)
@@ -145,6 +146,11 @@ class Handler(BaseHTTPRequestHandler):
                                        "audio/wav", {"X-Text-B64": base64.b64encode(text.encode()).decode()})
                             return
                         text = command
+                    elif config.WAKE_WORDS:
+                        # в режиме продолжения обращение необязательно, но и не мешает
+                        _, command = _wake_split(text)
+                        text = command or text
+                        print(f"[follow] {text}", flush=True)
                     wav = _pipeline(text)
                 self._send(200, wav, "audio/wav",
                            {"X-Text-B64": base64.b64encode(text.encode()).decode()})
