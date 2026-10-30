@@ -49,17 +49,31 @@ def _close(a: str, b: str) -> bool:
     return prev[-1] <= (1 if len(b) <= 8 else 2)
 
 
+def _wake_close(word: str) -> bool:
+    return any(_close(word, w.replace("ё", "е")) for w in config.WAKE_WORDS)
+
+
+def _wake_match(word: str) -> bool:
+    """«Маруся», «марусик», «марусе», «марусь» — всё это обращение."""
+    if _wake_close(word):
+        return True
+    return any(len(word) >= 4 and word.startswith(w.replace("ё", "е")[:4])
+               for w in config.WAKE_WORDS)
+
+
 def _wake_split(text: str) -> tuple[bool, str]:
-    """Ищет обращение в первых двух словах. Возвращает (обратились, команда)."""
+    """Ищет обращение в первых словах. Возвращает (обратились, команда).
+
+    Yandex иногда пишет «Маруся» как «Мару ся» — проверяем и склейку пар."""
     words = re.findall(r"[а-яёa-z0-9]+", text.lower().replace("ё", "е"))
     if not words:
         return False, ""
-    for idx in range(min(2, len(words))):
-        for wake in config.WAKE_WORDS:
-            w = wake.replace("ё", "е")
-            # «маруся», «марусик», «марусе» — общий корень тоже считаем обращением
-            if _close(words[idx], w) or (len(words[idx]) >= 5 and words[idx].startswith(w[:5])):
-                return True, " ".join(words[idx + 1:])
+    for idx in range(min(3, len(words))):
+        # сначала склейка: «мару» + «ся» иначе сработает по одному «мару»
+        if idx + 1 < len(words) and _wake_close(words[idx] + words[idx + 1]):
+            return True, " ".join(words[idx + 2:])
+        if _wake_match(words[idx]):
+            return True, " ".join(words[idx + 1:])
     return False, ""
 
 
