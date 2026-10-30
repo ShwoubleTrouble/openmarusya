@@ -22,6 +22,8 @@ import time
 import urllib.request
 
 FRAME_MS = 30
+NATIVE_RATE = 48000
+NATIVE_CH = 4
 
 
 def rms(frame: bytes) -> int:
@@ -41,12 +43,36 @@ def rms(frame: bytes) -> int:
 
 
 def start_recorder(device: str, rate: int) -> subprocess.Popen:
+    """Нативный поток: на капсуле ALSA отдаёт S32_LE/48k/4ch, только так
+    сигнал не теряется в 10 раз, как через plughw."""
     return subprocess.Popen(
-        ["arecord", "-q", "-D", device, "-f", "S16_LE", "-r", str(rate),
-         "-c", "1", "-t", "raw"],
+        ["arecord", "-q", "-D", device, "-f", "S32_LE",
+         "-r", str(NATIVE_RATE), "-c", str(NATIVE_CH), "-t", "raw"],
         stdout=subprocess.PIPE,
         bufsize=0,
     )
+
+
+def frames(stream, rate: int, gain: int):
+    """Отдаёт кадры s16le mono по FRAME_MS мс: даунмикс 4 каналов,
+    децимация 48k -> 16k, усиление."""
+    out_samples = rate * FRAME_MS // 1000
+    step = NATIVE_RATE // rate            # 3
+    need = out_samples * step * NATIVE_CH * 4
+    while True:
+        data = stream.read(need)
+        if not data or len(data) < need:
+            return
+        src = array.array("i")
+        src.frombytes(data)
+        if sys.byteorder == "big":
+            src.byteswap()
+        dst = array.array("h")
+        for i in range(0, len(src), step * NATIVE_CH):
+            v = (src[i] + src[i + NATIVE_CH] + src[i + 2 * NATIVE_CH]) // 3
+            v = (v >> 16) * gain
+            dst.append(-32768 if v < -32768 else 32767 if v > 32767 else v)
+        yield dst.tobytes()
 
 
 def stop(proc: subprocess.Popen) -> None:
@@ -58,7 +84,7 @@ def stop(proc: subprocess.Popen) -> None:
             proc.kill()
 
 
-def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
+def record_utterance(it, rate: int, threshold: int, trailing_ms: int,
                      max_s: float, wait_s: float, min_s: float = 0.4) -> tuple[bytes | None, int]:
     """Ждёт речь, пишет до паузы. Возвращает (pcm|None, пиковый уровень)."""
     frame_bytes = rate * 2 * FRAME_MS // 1000
@@ -71,7 +97,9 @@ def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
 
     # сбрасываем переходный процесс в начале захвата
     for _ in range(10):
-        if not proc.stdout.read(frame_bytes):
+        try:
+            next(it)
+        except StopIteration:
             return None, peak
 
     buf = bytearray()
@@ -80,8 +108,9 @@ def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
 
     # ждём устойчивой речи
     while seen < wait_frames:
-        chunk = proc.stdout.read(frame_bytes)
-        if not chunk or len(chunk) < frame_bytes:
+        try:
+            chunk = next(it)
+        except StopIteration:
             return None, peak
         seen += 1
         level = rms(chunk)
@@ -99,8 +128,9 @@ def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
 
     silence = 0
     while len(buf) < max_frames * frame_bytes:
-        chunk = proc.stdout.read(frame_bytes)
-        if not chunk or len(chunk) < frame_bytes:
+        try:
+            chunk = next(it)
+        except StopIteration:
             break
         buf += chunk
         level = rms(chunk)
@@ -150,9 +180,11 @@ def main() -> int:
     p.add_argument("--server", default=os.environ.get("MARYA_SERVER", "http://127.0.0.1:8080"))
     p.add_argument("--token", default=os.environ.get("MARYA_TOKEN", ""))
     p.add_argument("--rate", type=int, default=16000)
-    p.add_argument("--in-device", default="plughw:0,1",
-                   help="у капсулы микрофон на hw:0,1, через plughw ALSA сама конвертирует")
+    p.add_argument("--in-device", default="hw:0,1",
+                   help="у капсулы микрофон это hw:0,1 (нативный S32_LE/48k/4ch)")
     p.add_argument("--out-device", default="default")
+    p.add_argument("--gain", type=int, default=8,
+                   help="усиление после даунмикса (микрофон капсулы тихий)")
     p.add_argument("--threshold", type=int, default=0,
                    help="порог RMS; 0 = калибровка по шуму на старте")
     p.add_argument("--silence-ms", type=int, default=800)
@@ -165,18 +197,17 @@ def main() -> int:
     threshold = args.threshold
     if threshold <= 0:
         probe = start_recorder(args.in_device, args.rate)
-        frame_bytes = args.rate * 2 * FRAME_MS // 1000
         levels = []
         raw_min, raw_max = 32767, -32768
-        for _ in range(30):
-            chunk = probe.stdout.read(frame_bytes)
-            if chunk and len(chunk) == frame_bytes:
-                levels.append(rms(chunk))
-                a = array.array("h")
-                a.frombytes(chunk)
-                if a:
-                    raw_min = min(raw_min, min(a))
-                    raw_max = max(raw_max, max(a))
+        for chunk in frames(probe.stdout, args.rate, args.gain):
+            levels.append(rms(chunk))
+            a = array.array("h")
+            a.frombytes(chunk)
+            if a:
+                raw_min = min(raw_min, min(a))
+                raw_max = max(raw_max, max(a))
+            if len(levels) >= 30:
+                break
         stop(probe)
         levels.sort()
         floor = levels[len(levels) // 2] if levels else 0
@@ -197,7 +228,8 @@ def main() -> int:
                     print(f"arecord упал с кодом {proc.returncode}; "
                           f"проверь устройство {args.in_device}", flush=True)
                     return 1
-                pcm, peak = record_utterance(proc, args.rate, threshold,
+                pcm, peak = record_utterance(frames(proc.stdout, args.rate, args.gain),
+                                             args.rate, threshold,
                                              args.silence_ms, args.max_s, args.wait_s)
             finally:
                 stop(proc)
