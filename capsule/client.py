@@ -11,6 +11,7 @@
 import argparse
 import array
 import base64
+import collections
 import json
 import math
 import os
@@ -59,29 +60,42 @@ def stop(proc: subprocess.Popen) -> None:
 
 
 def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
-                     max_s: float, wait_s: float) -> bytes | None:
+                     max_s: float, wait_s: float, min_s: float = 0.4) -> bytes | None:
     """Ждёт речь, пишет до паузы. None — если речь не началась."""
     frame_bytes = rate * 2 * FRAME_MS // 1000
     trailing_frames = max(3, trailing_ms // FRAME_MS)
+    trigger_frames = 5                     # 150 мс речи подряд
+    preroll = collections.deque(maxlen=10)  # 300 мс до начала фразы
     max_frames = int(max_s * 1000 / FRAME_MS)
     wait_frames = int(wait_s * 1000 / FRAME_MS)
 
-    buf = bytearray()
-    speech_started = False
-    silence = 0
+    # сбрасываем переходный процесс в начале захвата
+    for _ in range(10):
+        if not proc.stdout.read(frame_bytes):
+            return None
 
-    for _ in range(wait_frames):
+    buf = bytearray()
+    run = 0
+    seen = 0
+
+    # ждём устойчивой речи
+    while seen < wait_frames:
         chunk = proc.stdout.read(frame_bytes)
         if not chunk or len(chunk) < frame_bytes:
             return None
+        seen += 1
+        preroll.append(chunk)
         if rms(chunk) >= threshold:
-            speech_started = True
-            buf += chunk
-            break
-
-    if not speech_started:
+            run += 1
+            if run >= trigger_frames:
+                buf += b"".join(preroll)
+                break
+        else:
+            run = 0
+    else:
         return None
 
+    silence = 0
     while len(buf) < max_frames * frame_bytes:
         chunk = proc.stdout.read(frame_bytes)
         if not chunk or len(chunk) < frame_bytes:
@@ -98,6 +112,9 @@ def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
     drop = max(0, silence - 5) * frame_bytes
     if drop:
         del buf[len(buf) - min(drop, len(buf)):]
+
+    if len(buf) < rate * 2 * min_s:
+        return None
     return bytes(buf)
 
 
