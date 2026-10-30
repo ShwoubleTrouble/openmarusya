@@ -184,16 +184,56 @@ def ask_server(server: str, pcm: bytes, rate: int, token: str, timeout: int,
 
 
 LED_MS = 600
+LED_IDLE_MS = 4000
+_led_idle = None
+
+
+def _ringled(*args: str):
+    return subprocess.Popen(
+        ["ringled", *args],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def led_idle_start() -> None:
+    """Медленное белое дыхание, пока ждём обращения."""
+    global _led_idle
+    if _led_idle is not None and _led_idle.poll() is None:
+        return
+    led_idle_stop()
+    try:
+        _led_idle = _ringled("--breathe", str(LED_IDLE_MS), "--duration", "86400000",
+                             "--fps", "15", "-b", "40", "all", "FFFFFF")
+    except OSError:
+        _led_idle = None
+
+
+def led_idle_stop() -> None:
+    global _led_idle
+    if _led_idle is not None and _led_idle.poll() is None:
+        _led_idle.terminate()
+        try:
+            _led_idle.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            _led_idle.kill()
+    _led_idle = None
+
+
+def led_off() -> None:
+    try:
+        subprocess.run(["ringled", "off"], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def pulse_ring() -> None:
-    """Один зелёный вдох-выдох кольца. ringled сам гаснет по --duration."""
+    """Проснулись: гасим дежурное дыхание и делаем один зелёный вдох."""
+    led_idle_stop()
+    led_off()
     try:
-        subprocess.Popen(
-            ["ringled", "all", "00FF00", "--breathe", str(LED_MS),
-             "--duration", str(LED_MS), "-b", "100"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        _ringled("--breathe", str(LED_MS), "--duration", str(LED_MS),
+                 "-b", "100", "all", "00FF00")
     except OSError:
         pass
 
@@ -257,6 +297,7 @@ def main() -> int:
 
     try:
         while True:
+            led_idle_start()
             wait = args.followup_s if followup else args.wait_s
             proc = start_recorder(args.in_device, args.rate)
             try:
@@ -304,6 +345,8 @@ def main() -> int:
                 return 0
 
     except KeyboardInterrupt:
+        led_idle_stop()
+        led_off()
         return 0
 
 
