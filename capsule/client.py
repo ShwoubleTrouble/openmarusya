@@ -24,13 +24,19 @@ FRAME_MS = 30
 
 
 def rms(frame: bytes) -> int:
+    """RMS после вычитания DC-смещения.
+
+    Некоторые ADC (в т.ч. на капсуле) отдают тишину как постоянную -32768,
+    из-за чего обычный RMS равен 32767 и триггер никогда не срабатывает.
+    """
     a = array.array("h")
     a.frombytes(frame)
     if sys.byteorder == "big":
         a.byteswap()
     if not a:
         return 0
-    return math.isqrt(sum(v * v for v in a) // len(a))
+    mean = sum(a) / len(a)
+    return math.isqrt(int(sum((v - mean) ** 2 for v in a)) // len(a))
 
 
 def start_recorder(device: str, rate: int) -> subprocess.Popen:
@@ -139,15 +145,24 @@ def main() -> int:
         probe = start_recorder(args.in_device, args.rate)
         frame_bytes = args.rate * 2 * FRAME_MS // 1000
         levels = []
+        raw_min, raw_max = 32767, -32768
         for _ in range(30):
             chunk = probe.stdout.read(frame_bytes)
             if chunk and len(chunk) == frame_bytes:
                 levels.append(rms(chunk))
+                a = array.array("h")
+                a.frombytes(chunk)
+                if a:
+                    raw_min = min(raw_min, min(a))
+                    raw_max = max(raw_max, max(a))
         stop(probe)
         levels.sort()
         floor = levels[len(levels) // 2] if levels else 0
         threshold = max(400, int(floor * 4))
-        print(f"шум {floor}, порог {threshold}", flush=True)
+        print(f"сигнал: {raw_min}..{raw_max}, шум(AC) {floor}, порог {threshold}", flush=True)
+        if raw_max - raw_min < 200:
+            print("! захват отдаёт постоянный уровень — микрофон не пишет или не тот "
+                  "--in-device. Смотри: arecord -l", flush=True)
 
     print(f"сервер: {args.server}", flush=True)
 

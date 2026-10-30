@@ -16,5 +16,6 @@ services:
       - .env
     volumes:
       - ./models:/models
+      - ../capsule:/srv/capsule:ro
     # whisper small на CPU int8: ~1 ГБ RAM
     mem_limit: 3g

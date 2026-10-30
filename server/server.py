@@ -70,8 +70,16 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(length) if length else b""
 
     def do_GET(self):
-        if urllib.parse.urlparse(self.path).path == "/health":
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/health":
             self._json(200, {"ok": True, "model": config.LLM_MODEL, "tts": config.TTS_ENGINE})
+        elif path == "/client.py":
+            # раздача клиента для обновления на колонке
+            try:
+                with open(config.CLIENT_PATH, "rb") as fh:
+                    self._send(200, fh.read(), "text/x-python; charset=utf-8")
+            except OSError:
+                self._json(404, {"error": "client.py не найден", "path": config.CLIENT_PATH})
         else:
             self._json(404, {"error": "not found"})
 

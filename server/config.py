@@ -34,6 +34,8 @@ HOST = _env("SERVER_HOST", "0.0.0.0")
 PORT = _env_int("SERVER_PORT", 8080)
 # Общий секрет: клиент шлёт его в X-Token. Пусто = без проверки.
 TOKEN = _env("SERVER_TOKEN", "")
+# откуда сервер отдаёт client.py по GET /client.py
+CLIENT_PATH = _env("CLIENT_PATH", "/srv/capsule/client.py")
 
 # --- LLM (OpenAI-совместимый, DeepSeek через неофф. провайдера) ---
 LLM_BASE_URL = _env("LLM_BASE_URL", "https://api.deepseek.com/v1").rstrip("/")
