@@ -129,7 +129,8 @@ def main() -> int:
     p.add_argument("--server", default=os.environ.get("MARYA_SERVER", "http://127.0.0.1:8080"))
     p.add_argument("--token", default=os.environ.get("MARYA_TOKEN", ""))
     p.add_argument("--rate", type=int, default=16000)
-    p.add_argument("--in-device", default="default")
+    p.add_argument("--in-device", default="plughw:0,1",
+                   help="у капсулы микрофон на hw:0,1, через plughw ALSA сама конвертирует")
     p.add_argument("--out-device", default="default")
     p.add_argument("--threshold", type=int, default=0,
                    help="порог RMS; 0 = калибровка по шуму на старте")
