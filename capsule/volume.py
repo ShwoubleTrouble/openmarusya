@@ -27,8 +27,7 @@ STEP = 5                    # шаг Master, примерно 3 дБ
 
 KEY_VOLUMEDOWN = 114
 KEY_VOLUMEUP = 115
-# выше при прибавлении, ниже при убавлении
-BEEP_HZ = {KEY_VOLUMEUP: 1100, KEY_VOLUMEDOWN: 700}
+BEEP_HZ = 700               # один и тот же звук на обе кнопки
 
 level = MASTER_MAX
 
@@ -46,15 +45,14 @@ def read_level() -> int:
     return int(m.group(1)) if m else MASTER_MAX
 
 
-_beeps: dict[int, bytes] = {}
+_beep: bytes | None = None
 
 
-def beep(code: int) -> None:
-    """Короткий щелчок: выше при прибавлении, ниже при убавлении."""
-    freq = BEEP_HZ.get(code)
-    if freq is None:
-        return
-    data = _beeps.get(freq)
+def beep() -> None:
+    """Короткий щелчок при нажатии кнопки громкости."""
+    global _beep
+    freq = BEEP_HZ
+    data = _beep
     if data is None:
         rate = 48000
         n = rate * BEEP_MS // 1000
@@ -70,7 +68,7 @@ def beep(code: int) -> None:
             w.setsampwidth(2)
             w.setframerate(rate)
             w.writeframes(a.tobytes())
-        data = _beeps[freq] = buf.getvalue()
+        data = _beep = buf.getvalue()
     try:
         subprocess.run(["aplay", "-q", "-D", OUT_DEVICE, "-"], input=data,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -125,7 +123,7 @@ def main() -> int:
                 else:
                     continue
                 apply(level)
-                beep(code)
+                beep()
         sys.stdout.flush()
     return 0
 
