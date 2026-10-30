@@ -91,6 +91,7 @@ def frames(stream, rate: int, gain: int):
 
 def stop(proc: subprocess.Popen) -> None:
     if proc.poll() is None:
+        proc.send_signal(signal.SIGCONT)   # снятый процесс не примет SIGTERM
         proc.terminate()
         try:
             proc.wait(timeout=2)
@@ -249,12 +250,18 @@ def pulse_ring() -> None:
         pass
 
 
+def aplay_args(device: str, path: str) -> list[str]:
+    """Короткий буфер: при перебивании звук обрывается сразу,
+    а не доигрывает уже отправленное в ALSA."""
+    return ["aplay", "-q", "-B", "150000", "-D", device, path]
+
+
 def play(wav: bytes, device: str) -> None:
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(wav)
         path = f.name
     try:
-        subprocess.run(["aplay", "-q", "-D", device, path], check=False)
+        subprocess.run(aplay_args(device, path), check=False)
     finally:
         os.unlink(path)
 
@@ -275,7 +282,7 @@ def record_barge(args, threshold: int, player: subprocess.Popen) -> tuple[bytes 
         time.sleep(0.2)
         if proc.poll() is not None:
             return None, False
-        pcm, _ = record_utterance(
+        pcm, peak = record_utterance(
             frames(proc.stdout, args.rate, args.gain), args.rate, threshold,
             args.silence_ms, args.max_s, args.max_s,
             on_trigger=trigger, alive=lambda: player.poll() is None,
@@ -284,6 +291,9 @@ def record_barge(args, threshold: int, player: subprocess.Popen) -> tuple[bytes 
         stop(proc)
     if pcm is None and paused:
         player.send_signal(signal.SIGCONT)   # фраза слишком короткая — продолжаем
+    if pcm is not None:
+        print(f"перебили: {len(pcm) / (args.rate * 2):.1f} с, "
+              f"пик {peak} при пороге {threshold}", flush=True)
     return pcm, True
 
 
@@ -297,7 +307,7 @@ def play_answer(wav: bytes, args, threshold: int, barge_threshold: int) -> bytes
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(wav)
         path = f.name
-    player = subprocess.Popen(["aplay", "-q", "-D", args.out_device, path],
+    player = subprocess.Popen(aplay_args(args.out_device, path),
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     fails = 0
     try:
@@ -316,7 +326,6 @@ def play_answer(wav: bytes, args, threshold: int, barge_threshold: int) -> bytes
             fails = 0
             if not pcm:
                 continue
-            print(f"перебили: {len(pcm) / (args.rate * 2):.1f} с, проверяю...", flush=True)
             try:
                 wav2 = ask_server(args.server, pcm, args.rate, args.token, args.timeout,
                                   False, pulse_ring, bargein=True)
