@@ -64,11 +64,13 @@ def _wake_match(word: str) -> bool:
 def _wake_split(text: str) -> tuple[bool, str]:
     """Ищет обращение в первых словах. Возвращает (обратились, команда).
 
-    Yandex иногда пишет «Маруся» как «Мару ся» — проверяем и склейку пар."""
+    Yandex иногда пишет «Маруся» как «Мару ся» — проверяем и склейку пар.
+    Ищем по всей фразе: на фоне разговоров обращение может оказаться
+    не в начале записи."""
     words = re.findall(r"[а-яёa-z0-9]+", text.lower().replace("ё", "е"))
     if not words:
         return False, ""
-    for idx in range(min(3, len(words))):
+    for idx in range(min(12, len(words))):
         # сначала склейка: «мару» + «ся» иначе сработает по одному «мару»
         if idx + 1 < len(words) and _wake_close(words[idx] + words[idx + 1]):
             return True, " ".join(words[idx + 2:])
