@@ -19,8 +19,8 @@ import wave
 
 CARD = "0"
 OUT_DEVICE = "default"
-BEEP_MS = 45
-BEEP_AMP = 26000            # почти полная шкала, иначе на капсуле еле слышно
+BEEP_MS = 70
+BEEP_AMP = 32700            # полная шкала, иначе на капсуле еле слышно
 MASTER_MAX = 100
 PLAYBACK_MAX = 251
 STEP = 5                    # шаг Master, примерно 3 дБ
@@ -58,9 +58,10 @@ def beep(code: int) -> None:
     if data is None:
         rate = 48000
         n = rate * BEEP_MS // 1000
+        ramp = rate * 5 // 1000                   # 5 мс на вход/выход
         a = array.array("h")
         for i in range(n):
-            env = math.sin(math.pi * i / n)       # плавные края, без щелчков
+            env = min(1.0, i / ramp, (n - 1 - i) / ramp)
             a.append(int(BEEP_AMP * env *
                          math.sin(2 * math.pi * freq * i / rate)))
         buf = io.BytesIO()
