@@ -117,7 +117,7 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/health":
             self._json(200, {"ok": True, "model": config.LLM_MODEL, "tts": config.TTS_ENGINE})
-        elif path in ("/client.py", "/clock.py"):
+        elif path in ("/client.py", "/clock.py", "/volume.py"):
             # раздача клиента для обновления на колонке
             name = path.lstrip("/")
             file = (config.CLIENT_PATH if name == "client.py" else
