@@ -45,7 +45,6 @@ def start_recorder(device: str, rate: int) -> subprocess.Popen:
         ["arecord", "-q", "-D", device, "-f", "S16_LE", "-r", str(rate),
          "-c", "1", "-t", "raw"],
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
         bufsize=0,
     )
 
@@ -60,19 +59,20 @@ def stop(proc: subprocess.Popen) -> None:
 
 
 def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
-                     max_s: float, wait_s: float, min_s: float = 0.4) -> bytes | None:
-    """Ждёт речь, пишет до паузы. None — если речь не началась."""
+                     max_s: float, wait_s: float, min_s: float = 0.4) -> tuple[bytes | None, int]:
+    """Ждёт речь, пишет до паузы. Возвращает (pcm|None, пиковый уровень)."""
     frame_bytes = rate * 2 * FRAME_MS // 1000
     trailing_frames = max(3, trailing_ms // FRAME_MS)
     trigger_frames = 5                     # 150 мс речи подряд
     preroll = collections.deque(maxlen=10)  # 300 мс до начала фразы
     max_frames = int(max_s * 1000 / FRAME_MS)
     wait_frames = int(wait_s * 1000 / FRAME_MS)
+    peak = 0
 
     # сбрасываем переходный процесс в начале захвата
     for _ in range(10):
         if not proc.stdout.read(frame_bytes):
-            return None
+            return None, peak
 
     buf = bytearray()
     run = 0
@@ -82,10 +82,12 @@ def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
     while seen < wait_frames:
         chunk = proc.stdout.read(frame_bytes)
         if not chunk or len(chunk) < frame_bytes:
-            return None
+            return None, peak
         seen += 1
+        level = rms(chunk)
+        peak = max(peak, level)
         preroll.append(chunk)
-        if rms(chunk) >= threshold:
+        if level >= threshold:
             run += 1
             if run >= trigger_frames:
                 buf += b"".join(preroll)
@@ -93,7 +95,7 @@ def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
         else:
             run = 0
     else:
-        return None
+        return None, peak
 
     silence = 0
     while len(buf) < max_frames * frame_bytes:
@@ -101,7 +103,9 @@ def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
         if not chunk or len(chunk) < frame_bytes:
             break
         buf += chunk
-        if rms(chunk) < threshold:
+        level = rms(chunk)
+        peak = max(peak, level)
+        if level < threshold:
             silence += 1
             if silence >= trailing_frames:
                 break
@@ -114,8 +118,8 @@ def record_utterance(proc, rate: int, threshold: int, trailing_ms: int,
         del buf[len(buf) - min(drop, len(buf)):]
 
     if len(buf) < rate * 2 * min_s:
-        return None
-    return bytes(buf)
+        return None, peak
+    return bytes(buf), peak
 
 
 def ask_server(server: str, pcm: bytes, rate: int, token: str, timeout: int) -> bytes:
@@ -188,14 +192,20 @@ def main() -> int:
         while True:
             proc = start_recorder(args.in_device, args.rate)
             try:
-                pcm = record_utterance(proc, args.rate, threshold,
-                                       args.silence_ms, args.max_s, args.wait_s)
+                time.sleep(0.2)
+                if proc.poll() is not None:
+                    print(f"arecord упал с кодом {proc.returncode}; "
+                          f"проверь устройство {args.in_device}", flush=True)
+                    return 1
+                pcm, peak = record_utterance(proc, args.rate, threshold,
+                                             args.silence_ms, args.max_s, args.wait_s)
             finally:
                 stop(proc)
 
             if not pcm:
                 if args.once:
                     return 0
+                print(f"нет речи (пик {peak} при пороге {threshold})", flush=True)
                 continue
 
             print(f"записано {len(pcm) / (args.rate * 2):.1f} с, шлю...", flush=True)
