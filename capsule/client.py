@@ -53,6 +53,19 @@ def start_recorder(device: str, rate: int) -> subprocess.Popen:
     )
 
 
+def read_exact(stream, n: int) -> bytes | None:
+    """Читает ровно n байт: pipe при bufsize=0 отдаёт короткие порции."""
+    chunks = []
+    got = 0
+    while got < n:
+        part = stream.read(n - got)
+        if not part:
+            return None
+        chunks.append(part)
+        got += len(part)
+    return b"".join(chunks)
+
+
 def frames(stream, rate: int, gain: int):
     """Отдаёт кадры s16le mono по FRAME_MS мс: даунмикс 4 каналов,
     децимация 48k -> 16k, усиление."""
@@ -60,8 +73,8 @@ def frames(stream, rate: int, gain: int):
     step = NATIVE_RATE // rate            # 3
     need = out_samples * step * NATIVE_CH * 4
     while True:
-        data = stream.read(need)
-        if not data or len(data) < need:
+        data = read_exact(stream, need)
+        if data is None:
             return
         src = array.array("i")
         src.frombytes(data)
