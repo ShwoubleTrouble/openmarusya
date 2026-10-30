@@ -1,8 +1,10 @@
 """TTS: piper или espeak-ng. Возвращает WAV (bytes)."""
 
+import array
 import base64
 import io
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -15,6 +17,35 @@ import config
 
 class TTSError(RuntimeError):
     pass
+
+
+def _fix_tail(pcm: bytes, rate: int) -> bytes:
+    """Gemini обрывает аудио всплеском шума на последних миллисекундах.
+    Срезаем выброс и делаем плавное затухание."""
+    a = array.array("h")
+    a.frombytes(pcm)
+    if len(a) < rate // 10:
+        return pcm
+
+    def rms(seg):
+        return math.isqrt(sum(v * v for v in seg) // len(seg)) if seg else 0
+
+    win = max(1, rate // 200)          # 5 мс
+    ref = max(1, rate // 20)           # 50 мс
+    trimmed = 0
+    while trimmed < rate // 10 and len(a) > ref + win:   # не больше 100 мс
+        last = a[-win:]
+        prev = a[-ref - win:-win]
+        if rms(last) > max(2500, 2 * rms(prev)):
+            del a[-win:]
+            trimmed += win
+        else:
+            break
+
+    fade = min(len(a), rate // 50)     # 20 мс затухания
+    for i in range(fade):
+        a[len(a) - fade + i] = int(a[len(a) - fade + i] * (1 - i / fade))
+    return a.tobytes()
 
 
 def _gemini(text: str) -> bytes:
@@ -59,6 +90,7 @@ def _gemini(text: str) -> bytes:
         raise TTSError(f"gemini tts: нет аудио в ответе ({str(data)[:150]})") from exc
 
     # Gemini отдаёт сырой s16le mono — оборачиваем в WAV
+    pcm = _fix_tail(pcm, rate)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
