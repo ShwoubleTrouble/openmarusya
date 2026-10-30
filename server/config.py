@@ -80,6 +80,14 @@ GEMINI_PROXY = _env("GEMINI_PROXY", "http://127.0.0.1:10809")
 
 PIPER_BIN = _env("PIPER_BIN", "piper")
 PIPER_MODEL = _env("PIPER_MODEL", "/opt/models/ru_RU-irina-medium.onnx")
+
+# --- Yandex SpeechKit ---
+YANDEX_API_KEY = _env("YANDEX_API_KEY", "")
+YANDEX_URL = _env("YANDEX_URL", "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize")
+YANDEX_VOICE = _env("YANDEX_VOICE", "alena")
+YANDEX_EMOTION = _env("YANDEX_EMOTION", "good")
+YANDEX_SPEED = _env("YANDEX_SPEED", "1.0")
+YANDEX_RATE = _env_int("YANDEX_RATE", 48000)
 ESPEAK_BIN = _env("ESPEAK_BIN", "espeak-ng")
 ESPEAK_VOICE = _env("ESPEAK_VOICE", "ru")
 ESPEAK_SPEED = _env_int("ESPEAK_SPEED", 160)

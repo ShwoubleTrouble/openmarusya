@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import wave
 
@@ -54,6 +55,42 @@ def _fix_tail(pcm: bytes, rate: int) -> bytes:
     for k in range(fade):
         a[len(a) - fade + k] = int(a[len(a) - fade + k] * (1 - k / fade))
     return a.tobytes()
+
+
+def _yandex(text: str) -> bytes:
+    """Yandex SpeechKit v1: сырой PCM s16le -> WAV."""
+    if not config.YANDEX_API_KEY:
+        raise TTSError("нет YANDEX_API_KEY")
+    data = urllib.parse.urlencode({
+        "text": text,
+        "lang": "ru-RU",
+        "voice": config.YANDEX_VOICE,
+        "emotion": config.YANDEX_EMOTION,
+        "speed": config.YANDEX_SPEED,
+        "format": "lpcm",
+        "sampleRateHertz": str(config.YANDEX_RATE),
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        config.YANDEX_URL, data=data,
+        headers={"Authorization": f"Api-Key {config.YANDEX_API_KEY}",
+                 "Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            pcm = resp.read()
+    except Exception as exc:
+        raise TTSError(f"yandex tts: {exc}") from exc
+    if not pcm:
+        raise TTSError("yandex tts: пустой ответ")
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(config.YANDEX_RATE)
+        w.writeframes(pcm)
+    return buf.getvalue()
 
 
 def _gemini(text: str) -> bytes:
@@ -160,6 +197,11 @@ def synthesize(text: str) -> bytes:
     text = text.strip()
     if not text:
         raise TTSError("пустой текст")
+    if config.TTS_ENGINE == "yandex":
+        try:
+            return _yandex(text)
+        except TTSError:
+            return _espeak(text)
     if config.TTS_ENGINE == "gemini":
         try:
             return _gemini(text)
