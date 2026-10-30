@@ -203,7 +203,7 @@ def led_idle_start() -> None:
     led_idle_stop()
     try:
         _led_idle = _ringled("--breathe", str(LED_IDLE_MS), "--duration", "86400000",
-                             "--fps", "30", "-b", "40", "all", "FFFFFF")
+                             "-b", "40", "all", "FFFFFF")
     except OSError:
         _led_idle = None
 
