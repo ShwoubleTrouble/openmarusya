@@ -59,6 +59,13 @@ SYSTEM_PROMPT = _env(
 WAKE_WORDS = [w.strip().lower() for w in _env("WAKE_WORDS", "маруся,марусь,марусе,маруси").split(",") if w.strip()]
 WAKE_REPLY = _env("WAKE_REPLY", "Да?")
 
+# openWakeWord на сервере: проверка звука до STT. Пусто = выключено
+# (тогда работает только текстовое сопоставление WAKE_WORDS).
+WAKE_ONNX_MODEL = _env("WAKE_ONNX_MODEL", "")
+WAKE_ONNX_MEL = _env("WAKE_ONNX_MEL", "/models/wake/melspectrogram.onnx")
+WAKE_ONNX_EMB = _env("WAKE_ONNX_EMB", "/models/wake/embedding_model.onnx")
+WAKE_ONNX_THRESHOLD = float(_env("WAKE_ONNX_THRESHOLD", "0.5"))
+
 # --- STT ---
 # "vosk" (pip, realtime на старых CPU) | "faster_whisper" | "whisper_cpp"
 STT_ENGINE = _env("STT_ENGINE", "vosk")

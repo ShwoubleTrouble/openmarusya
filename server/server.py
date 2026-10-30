@@ -24,6 +24,7 @@ import config
 import llm
 import stt
 import tts
+import wake
 
 _pipeline_lock = threading.Lock()
 _llm = llm.LLM()
@@ -168,12 +169,27 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, tts.synthesize(NOT_HEARD), "audio/wav")
                     return
                 with _pipeline_lock:
-                    text = stt.transcribe(pcm, rate)
                     followup = self.headers.get("X-Followup", "0") == "1"
+                    # openWakeWord по звуку: если модель подключена, чужая
+                    # речь дальше STT не идёт вовсе
+                    detector = None if followup else wake.get()
+                    onnx_hit = False
+                    if detector is not None:
+                        onnx_hit = detector.score(pcm, rate) >= detector.threshold
+                        if not onnx_hit:
+                            print("[onnx-skip]", flush=True)
+                            self._send(204, b"", "text/plain")
+                            return
+                    text = stt.transcribe(pcm, rate)
                     woken_now = False
                     if config.WAKE_WORDS and not followup:
                         woken, command = _wake_split(text)
-                        if not woken:
+                        if onnx_hit and not woken:
+                            command = text          # имя расслышал детектор
+                            woken = True
+                        if onnx_hit:
+                            print(f"[wake/onnx] {text}", flush=True)
+                        elif not woken:
                             # второй проход: распознаём только ключевые слова
                             kw = stt.wake_text(pcm, rate, config.WAKE_WORDS)
                             woken, _ = _wake_split(kw)
