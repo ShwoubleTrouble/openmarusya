@@ -148,23 +148,22 @@ class Handler(BaseHTTPRequestHandler):
                 with _pipeline_lock:
                     text = stt.transcribe(pcm, rate)
                     followup = self.headers.get("X-Followup", "0") == "1"
-                    bargein = self.headers.get("X-Bargein", "0") == "1"
                     woken_now = False
-                    if config.WAKE_WORDS and (bargein or not followup):
+                    if config.WAKE_WORDS and not followup:
                         woken, command = _wake_split(text)
                         if not woken:
-                            print(f"[{'barge-skip' if bargein else 'skip'}] {text}", flush=True)
+                            print(f"[skip] {text}", flush=True)
                             self._send(204, b"", "text/plain")
                             return
                         if not command:
-                            print(f"[{'barge' if bargein else 'wake'}] {text}", flush=True)
+                            print(f"[wake] {text}", flush=True)
                             self._send(200, tts.synthesize(config.WAKE_REPLY),
                                        "audio/wav", {"X-Text-B64": base64.b64encode(text.encode()).decode(),
                                                      "X-Wake": "1"})
                             return
                         text = command
                         woken_now = True
-                        print(f"[{'barge' if bargein else 'wake'}] {text}", flush=True)
+                        print(f"[wake] {text}", flush=True)
                         # отдаём заголовок сразу: клиент пульнёт кольцом,
                         # пока сервер считает ответ
                         self._send_head_now(200, "audio/wav",
