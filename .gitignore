@@ -1,0 +1,16 @@
+# ключи и секреты
+.env
+*.env
+!.env.example
+
+# модели и большие файлы
+models/
+*.onnx
+*.bin
+*.wav
+
+# python
+__pycache__/
+*.pyc
+venv/
+.venv/
