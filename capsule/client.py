@@ -166,7 +166,7 @@ def record_utterance(it, rate: int, threshold: int, trailing_ms: int,
 
 
 def ask_server(server: str, pcm: bytes, rate: int, token: str, timeout: int,
-               followup: bool = False) -> bytes:
+               followup: bool = False, on_wake=None) -> bytes:
     req = urllib.request.Request(
         server.rstrip("/") + "/v1/voice",
         data=pcm,
@@ -177,7 +177,25 @@ def ask_server(server: str, pcm: bytes, rate: int, token: str, timeout: int,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # заголовки приходят сразу после распознавания, тело — после синтеза
+        if on_wake is not None and resp.headers.get("X-Wake") == "1":
+            on_wake()
         return resp.read()
+
+
+LED_MS = 600
+
+
+def pulse_ring() -> None:
+    """Один зелёный вдох-выдох кольца. ringled сам гаснет по --duration."""
+    try:
+        subprocess.Popen(
+            ["ringled", "all", "00FF00", "--breathe", str(LED_MS),
+             "--duration", str(LED_MS), "-b", "100"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
 
 
 def play(wav: bytes, device: str) -> None:
@@ -264,7 +282,8 @@ def main() -> int:
                   f"{' (продолжение)' if followup else ''}", flush=True)
             t0 = time.time()
             try:
-                wav = ask_server(args.server, pcm, args.rate, args.token, args.timeout, followup)
+                wav = ask_server(args.server, pcm, args.rate, args.token, args.timeout, followup,
+                                 pulse_ring)
             except Exception as exc:
                 print(f"ошибка сервера: {exc}", flush=True)
                 followup = False

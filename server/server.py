@@ -92,6 +92,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_head_now(self, code: int, ctype: str, extra=None):
+        """Заголовки уходят сразу, тело — после синтеза.
+        Так клиент узнаёт про wake word раньше, чем готов ответ,
+        и кольцо успевает пульснуть до начала речи."""
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Connection", "close")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.close_connection = True
+        self._streaming = True
+
     def _json(self, code: int, obj: dict):
         self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
 
@@ -115,6 +128,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
+        self._streaming = False
         if not self._auth_ok():
             self._json(403, {"error": "bad token"})
             return
@@ -134,6 +148,7 @@ class Handler(BaseHTTPRequestHandler):
                 with _pipeline_lock:
                     text = stt.transcribe(pcm, rate)
                     followup = self.headers.get("X-Followup", "0") == "1"
+                    woken_now = False
                     if config.WAKE_WORDS and not followup:
                         woken, command = _wake_split(text)
                         if not woken:
@@ -143,17 +158,28 @@ class Handler(BaseHTTPRequestHandler):
                         if not command:
                             print(f"[wake] {text}", flush=True)
                             self._send(200, tts.synthesize(config.WAKE_REPLY),
-                                       "audio/wav", {"X-Text-B64": base64.b64encode(text.encode()).decode()})
+                                       "audio/wav", {"X-Text-B64": base64.b64encode(text.encode()).decode(),
+                                                     "X-Wake": "1"})
                             return
                         text = command
+                        woken_now = True
+                        print(f"[wake] {text}", flush=True)
+                        # отдаём заголовок сразу: клиент пульнёт кольцом,
+                        # пока сервер считает ответ
+                        self._send_head_now(200, "audio/wav",
+                                            {"X-Wake": "1",
+                                             "X-Text-B64": base64.b64encode(text.encode()).decode()})
                     elif config.WAKE_WORDS:
                         # в режиме продолжения обращение необязательно, но и не мешает
                         _, command = _wake_split(text)
                         text = command or text
                         print(f"[follow] {text}", flush=True)
                     wav = _pipeline(text)
-                self._send(200, wav, "audio/wav",
-                           {"X-Text-B64": base64.b64encode(text.encode()).decode()})
+                if woken_now:
+                    self.wfile.write(wav)
+                else:
+                    self._send(200, wav, "audio/wav",
+                               {"X-Text-B64": base64.b64encode(text.encode()).decode()})
 
             elif path == "/v1/text":
                 req = json.loads(self._read_body().decode("utf-8") or "{}")
@@ -169,6 +195,8 @@ class Handler(BaseHTTPRequestHandler):
             pass
         except Exception as exc:
             traceback.print_exc(file=sys.stderr)
+            if getattr(self, "_streaming", False):
+                return   # заголовки уже ушли, второй ответ в тело не пишем
             try:
                 self._json(500, {"error": str(exc)[:300]})
             except Exception:
