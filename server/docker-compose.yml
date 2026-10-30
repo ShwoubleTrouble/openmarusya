@@ -1,14 +1,20 @@
 services:
   marusya:
-    build: .
+    build:
+      context: .
+      args:
+        # если Docker Hub недоступен — указать зеркало в .env
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
     container_name: marusya
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${HOST_PORT:-8080}:8080"
+    environment:
+      # внутри контейнера порт фиксирован, снаружи — HOST_PORT из .env
+      SERVER_PORT: "8080"
     env_file:
       - .env
     volumes:
       - ./models:/models
-    # whisper small на CPU int8: ~2 ядра, ~1 ГБ RAM
-    cpus: "4"
+    # whisper small на CPU int8: ~1 ГБ RAM
     mem_limit: 3g

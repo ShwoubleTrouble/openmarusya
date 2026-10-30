@@ -1,4 +1,5 @@
-FROM python:3.11-slim
+ARG PYTHON_IMAGE=python:3.11-slim
+FROM ${PYTHON_IMAGE}
 
 # espeak-ng — fallback TTS, если piper-голос не подключён
 RUN apt-get update \
