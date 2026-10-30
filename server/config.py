@@ -70,8 +70,14 @@ WHISPER_LANG = _env("WHISPER_LANG", "ru")
 WHISPER_THREADS = _env_int("WHISPER_THREADS", 0)  # 0 = все ядра
 
 # --- TTS ---
-# "piper" | "espeak"
-TTS_ENGINE = _env("TTS_ENGINE", "piper")
+# "gemini" (нейронный голос) | "piper" | "espeak"
+TTS_ENGINE = _env("TTS_ENGINE", "gemini")
+GEMINI_API_KEY = _env("GEMINI_API_KEY", "")
+GEMINI_TTS_MODEL = _env("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
+GEMINI_TTS_VOICE = _env("GEMINI_TTS_VOICE", "Kore")
+# прокси до generativelanguage.googleapis.com (на сервере Google режется)
+GEMINI_PROXY = _env("GEMINI_PROXY", "http://127.0.0.1:10809")
+
 PIPER_BIN = _env("PIPER_BIN", "piper")
 PIPER_MODEL = _env("PIPER_MODEL", "/opt/models/ru_RU-irina-medium.onnx")
 ESPEAK_BIN = _env("ESPEAK_BIN", "espeak-ng")

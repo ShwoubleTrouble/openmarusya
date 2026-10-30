@@ -1,15 +1,71 @@
 """TTS: piper или espeak-ng. Возвращает WAV (bytes)."""
 
+import base64
+import io
+import json
 import os
 import shutil
 import subprocess
 import tempfile
+import urllib.request
+import wave
 
 import config
 
 
 class TTSError(RuntimeError):
     pass
+
+
+def _gemini(text: str) -> bytes:
+    """Нейронный голос Gemini TTS. Возвращает готовый WAV."""
+    if not config.GEMINI_API_KEY:
+        raise TTSError("нет GEMINI_API_KEY")
+    payload = {
+        "contents": [{"parts": [{"text": text}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": config.GEMINI_TTS_VOICE}}
+            },
+        },
+    }
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{config.GEMINI_TTS_MODEL}:generateContent?key={config.GEMINI_API_KEY}")
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"https": config.GEMINI_PROXY, "http": config.GEMINI_PROXY})
+        if config.GEMINI_PROXY else urllib.request.ProxyHandler({})
+    )
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with opener.open(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        raise TTSError(f"gemini tts: {exc}") from exc
+
+    try:
+        part = data["candidates"][0]["content"]["parts"][0]["inlineData"]
+        pcm = base64.b64decode(part["data"])
+        mime = part.get("mimeType", "audio/L16;rate=24000")
+        rate = 24000
+        for chunk in mime.split(";"):
+            chunk = chunk.strip()
+            if chunk.startswith("rate="):
+                rate = int(chunk[5:])
+    except (KeyError, IndexError, TypeError) as exc:
+        raise TTSError(f"gemini tts: нет аудио в ответе ({str(data)[:150]})") from exc
+
+    # Gemini отдаёт сырой s16le mono — оборачиваем в WAV
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+    return buf.getvalue()
 
 
 def _which(name: str) -> str:
@@ -53,6 +109,12 @@ def synthesize(text: str) -> bytes:
     text = text.strip()
     if not text:
         raise TTSError("пустой текст")
+    if config.TTS_ENGINE == "gemini":
+        try:
+            return _gemini(text)
+        except TTSError:
+            # мягкая деградация: без сети всё равно ответим голосом
+            return _espeak(text)
     if config.TTS_ENGINE == "espeak":
         return _espeak(text)
     try:
