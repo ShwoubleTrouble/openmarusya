@@ -68,6 +68,12 @@ apk add alsa-utils python3
 python3 client.py --server http://IP_СЕРВЕРА:8080 --token change-me
 ```
 
+Часы на экране — отдельный процесс, раз в минуту вызывает `clockdisp HH:MM`:
+
+```sh
+python3 clock.py &
+```
+
 Полезные флаги: `--once` (одна фраза и выход), `--threshold` (порог RMS вручную),
 `--silence-ms` (пауза, завершающая фразу), `--in-device/--out-device`.
 
