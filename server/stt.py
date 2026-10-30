@@ -72,6 +72,24 @@ def _transcribe_vosk(pcm: bytes, sample_rate: int) -> str:
     return _json.loads(rec.FinalResult()).get("text", "").strip()
 
 
+def _transcribe_vosk_kw(pcm: bytes, sample_rate: int, words: list[str]) -> str:
+    """Vosk с грамматикой из одних ключевых слов: на коротком «Маруся»
+    small-модель с общей грамматикой часто отдаёт пустоту, а с ограниченной —
+    узнаёт слово заметно надёжнее."""
+    import json as _json
+    from vosk import KaldiRecognizer
+
+    if sample_rate != 16000:
+        raise STTError(f"vosk ждёт 16000 Гц, пришло {sample_rate}")
+    grammar = list(dict.fromkeys(w.lower() for w in words if w.strip()))
+    if not grammar:
+        return ""
+    rec = KaldiRecognizer(_vosk(), sample_rate,
+                          _json.dumps(grammar + ["[unk]"], ensure_ascii=False))
+    rec.AcceptWaveform(pcm)
+    return _json.loads(rec.FinalResult()).get("text", "").strip()
+
+
 # ---------- faster-whisper ----------
 
 _fw_model = None
@@ -148,6 +166,17 @@ def _transcribe_cpp(pcm: bytes, sample_rate: int) -> str:
         return proc.stdout.strip()
     finally:
         os.unlink(wav_path)
+
+
+def wake_text(pcm: bytes, sample_rate: int, words: list[str]) -> str:
+    """Второй проход только по ключевым словам. Пусто — движок не умеет
+    (для не-vosk второй проход бессмыслен: результат будет тот же)."""
+    if config.STT_ENGINE != "vosk" or not words:
+        return ""
+    try:
+        return _transcribe_vosk_kw(pcm, sample_rate, words)
+    except Exception:
+        return ""
 
 
 def transcribe(pcm: bytes, sample_rate: int = 16000) -> str:

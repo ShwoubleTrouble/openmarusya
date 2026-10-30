@@ -56,7 +56,7 @@ SYSTEM_PROMPT = _env(
 
 # --- Wake word ---
 # Фразы без обращения игнорируются. Пусто = реагировать на всё.
-WAKE_WORDS = [w.strip().lower() for w in _env("WAKE_WORDS", "маруся,марусь,маруся,").split(",") if w.strip()]
+WAKE_WORDS = [w.strip().lower() for w in _env("WAKE_WORDS", "маруся,марусь,марусе,маруси").split(",") if w.strip()]
 WAKE_REPLY = _env("WAKE_REPLY", "Да?")
 
 # --- STT ---

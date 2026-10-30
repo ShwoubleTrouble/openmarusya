@@ -108,14 +108,15 @@ def record_utterance(it, rate: int, threshold: int, trailing_ms: int,
     """Ждёт речь, пишет до паузы. Возвращает (pcm|None, пиковый уровень)."""
     frame_bytes = rate * 2 * FRAME_MS // 1000
     trailing_frames = max(3, trailing_ms // FRAME_MS)
-    trigger_frames = 5                     # 150 мс речи подряд
-    preroll = collections.deque(maxlen=10)  # 300 мс до начала фразы
+    trigger_frames = 3                     # 90 мс речи подряд
+    preroll = collections.deque(maxlen=500 // FRAME_MS)  # 480 мс до начала фразы
     max_frames = int(max_s * 1000 / FRAME_MS)
     wait_frames = int(wait_s * 1000 / FRAME_MS)
     peak = 0
 
-    # сбрасываем переходный процесс в начале захвата
-    for _ in range(10):
+    # сбрасываем переходный процесс в начале захвата (90 мс, а не 300:
+    # иначе теряется начало короткого «Маруся»)
+    for _ in range(3):
         try:
             next(it)
         except StopIteration:
@@ -355,7 +356,7 @@ def main() -> int:
         stop(probe)
         levels.sort()
         floor = levels[len(levels) // 2] if levels else 0
-        threshold = max(150, int(floor * 4))
+        threshold = max(80, int(floor * 2.5))
         print(f"сигнал: {raw_min}..{raw_max}, шум(AC) {floor}, порог {threshold}", flush=True)
         if raw_max - raw_min < 200:
             print("! захват отдаёт постоянный уровень — микрофон не пишет или не тот "

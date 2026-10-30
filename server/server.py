@@ -56,7 +56,9 @@ def _wake_split(text: str) -> tuple[bool, str]:
         return False, ""
     for idx in range(min(2, len(words))):
         for wake in config.WAKE_WORDS:
-            if _close(words[idx], wake.replace("ё", "е")):
+            w = wake.replace("ё", "е")
+            # «маруся», «марусик», «марусе» — общий корень тоже считаем обращением
+            if _close(words[idx], w) or (len(words[idx]) >= 5 and words[idx].startswith(w[:5])):
                 return True, " ".join(words[idx + 1:])
     return False, ""
 
@@ -155,6 +157,13 @@ class Handler(BaseHTTPRequestHandler):
                     woken_now = False
                     if config.WAKE_WORDS and not followup:
                         woken, command = _wake_split(text)
+                        if not woken:
+                            # второй проход: распознаём только ключевые слова
+                            kw = stt.wake_text(pcm, rate, config.WAKE_WORDS)
+                            woken, _ = _wake_split(kw)
+                            if woken:
+                                command = text   # обращение в общем тексте потерялось
+                                print(f"[wake/kw] {kw!r} -> {text!r}", flush=True)
                         if not woken:
                             print(f"[skip] {text}", flush=True)
                             self._send(204, b"", "text/plain")
